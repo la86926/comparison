@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comparador de Documentos</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
+<style>
+  :root{
+    --bg:#f5f5f7;
+    --card:#ffffff;
+    --ink:#1d1d1f;
+    --ink-soft:#6e6e73;
+    --line:#e8e8ed;
+    --accent:#0071e3;
+    --add-bg:#d9f2dd;      /* verde pastel */
+    --add-ink:#1e6b34;
+    --del-bg:#fbdce2;      /* rosa pastel */
+    --del-ink:#a4243b;
+    --focus-ring:#b8d8f8;  /* celeste pastel */
+    --radius:18px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+    padding-bottom:80px;
+  }
+
+  /* ── Encabezado ─────────────────────────── */
+  header{
+    text-align:center;
+    padding:64px 24px 40px;
+  }
+  header h1{
+    font-size:clamp(32px,5vw,48px);
+    font-weight:700;letter-spacing:-0.02em;
+  }
+  header p{
+    margin-top:10px;color:var(--ink-soft);
+    font-size:18px;font-weight:400;
+  }
+
+  .wrap{max-width:1060px;margin:0 auto;padding:0 24px}
+
+  /* ── Zonas de carga ─────────────────────── */
+  .grid{
+    display:grid;grid-template-columns:1fr 1fr;gap:20px;
+  }
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+
+  .panel{
+    background:var(--card);border-radius:var(--radius);
+    padding:22px;box-shadow:0 1px 3px rgba(0,0,0,.05);
+    border:1px solid var(--line);
+  }
+  .panel h2{
+    font-size:15px;font-weight:600;letter-spacing:.01em;
+    display:flex;align-items:center;gap:8px;margin-bottom:14px;
+  }
+  .dot{width:9px;height:9px;border-radius:50%}
+  .dot.a{background:#a8c7e8}
+  .dot.b{background:#c9e8b8}
+
+  .tabs{display:flex;gap:6px;margin-bottom:12px}
+  .tab{
+    border:none;background:transparent;color:var(--ink-soft);
+    font:inherit;font-size:13px;font-weight:500;
+    padding:6px 14px;border-radius:99px;cursor:pointer;
+    transition:background .2s,color .2s;
+  }
+  .tab.active{background:var(--ink);color:#fff}
+
+  .drop{
+    border:1.5px dashed #c7c7cc;border-radius:14px;
+    padding:30px 16px;text-align:center;cursor:pointer;
+    transition:border-color .2s,background .2s;
+  }
+  .drop:hover,.drop.over{border-color:var(--accent);background:#f0f7ff}
+  .drop .ic{font-size:28px;margin-bottom:8px}
+  .drop p{font-size:14px;color:var(--ink-soft)}
+  .drop strong{color:var(--accent);font-weight:600}
+  .drop small{display:block;margin-top:6px;font-size:12px;color:#aeaeb2}
+  .drop input{display:none}
+  .fname{
+    margin-top:10px;font-size:13px;font-weight:500;color:var(--add-ink);
+    display:none;
+  }
+
+  textarea{
+    width:100%;min-height:150px;resize:vertical;
+    border:1px solid var(--line);border-radius:14px;
+    padding:14px;font:inherit;font-size:14px;line-height:1.5;
+    outline:none;display:none;background:#fafafa;
+  }
+  textarea:focus{border-color:var(--accent);background:#fff}
+
+  /* ── Botón principal ────────────────────── */
+  .actions{text-align:center;margin:28px 0 40px}
+  .btn-main{
+    background:var(--accent);color:#fff;border:none;
+    font:inherit;font-size:16px;font-weight:600;
+    padding:14px 42px;border-radius:99px;cursor:pointer;
+    transition:transform .15s,box-shadow .15s,opacity .2s;
+    box-shadow:0 4px 14px rgba(0,113,227,.3);
+  }
+  .btn-main:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,113,227,.35)}
+  .btn-main:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+  .btn-ghost{
+    background:transparent;border:none;color:var(--accent);
+    font:inherit;font-size:14px;font-weight:500;cursor:pointer;
+    margin-left:14px;
+  }
+
+  /* ── Barra de navegación de cambios ─────── */
+  .navbar{
+    position:sticky;top:12px;z-index:50;
+    display:none;justify-content:center;
+    margin-bottom:22px;
+  }
+  .navbar .inner{
+    display:flex;align-items:center;gap:14px;
+    background:rgba(255,255,255,.8);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid var(--line);border-radius:99px;
+    padding:8px 16px;box-shadow:0 4px 18px rgba(0,0,0,.08);
+  }
+  .navbtn{
+    width:36px;height:36px;border-radius:50%;border:none;
+    background:var(--ink);color:#fff;font-size:16px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    transition:transform .15s,opacity .2s;
+  }
+  .navbtn:hover{transform:scale(1.08)}
+  .navbtn:disabled{opacity:.25;cursor:not-allowed;transform:none}
+  .counter{font-size:14px;font-weight:600;min-width:110px;text-align:center}
+  .legend{display:flex;gap:10px;font-size:12px;color:var(--ink-soft)}
+  .legend span{display:flex;align-items:center;gap:5px}
+  .chip{width:14px;height:14px;border-radius:4px;display:inline-block}
+  .chip.add{background:var(--add-bg)}
+  .chip.del{background:var(--del-bg)}
+  @media(max-width:600px){.legend{display:none}}
+
+  /* ── Resultado ──────────────────────────── */
+  #resultCard{
+    display:none;background:var(--card);
+    border-radius:var(--radius);border:1px solid var(--line);
+    box-shadow:0 1px 3px rgba(0,0,0,.05);
+    padding:36px clamp(20px,5vw,56px);
+  }
+  #stats{
+    display:flex;gap:22px;flex-wrap:wrap;
+    padding-bottom:18px;margin-bottom:22px;
+    border-bottom:1px solid var(--line);
+    font-size:14px;color:var(--ink-soft);
+  }
+  #stats b{color:var(--ink)}
+  #diffOutput{
+    font-size:16px;line-height:1.85;
+    white-space:pre-wrap;word-wrap:break-word;
+  }
+  ins{
+    background:var(--add-bg);color:var(--add-ink);
+    text-decoration:none;border-radius:5px;padding:1px 3px;
+  }
+  del{
+    background:var(--del-bg);color:var(--del-ink);
+    text-decoration:line-through;border-radius:5px;padding:1px 3px;
+  }
+  .chg.current ins,.chg.current del{
+    outline:2.5px solid var(--focus-ring);
+    outline-offset:2px;
+    animation:pulse 1.2s ease;
+  }
+  @keyframes pulse{
+    0%{outline-color:var(--accent)}
+    100%{outline-color:var(--focus-ring)}
+  }
+
+  .empty{
+    text-align:center;color:var(--ink-soft);font-size:15px;padding:20px 0;
+  }
+  .loading{
+    display:none;text-align:center;color:var(--ink-soft);
+    font-size:14px;margin-bottom:20px;
+  }
+  .spinner{
+    display:inline-block;width:16px;height:16px;vertical-align:-3px;
+    border:2px solid var(--line);border-top-color:var(--accent);
+    border-radius:50%;animation:spin .8s linear infinite;margin-right:8px;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  @media (prefers-reduced-motion: reduce){
+    html{scroll-behavior:auto}
+    *{animation:none !important;transition:none !important}
+  }
+
+  footer{
+    text-align:center;margin-top:56px;
+    font-size:13px;color:#aeaeb2;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Comparador de Documentos</h1>
+  <p>Sube dos versiones — Word, PDF, TXT o texto — y encuentra cada cambio al instante.</p>
+</header>
+
+<div class="wrap">
+
+  <div class="grid">
+    <!-- Documento A -->
+    <section class="panel">
+      <h2><span class="dot a"></span>Documento original</h2>
+      <div class="tabs">
+        <button class="tab active" data-doc="A" data-mode="file">Archivo</button>
+        <button class="tab" data-doc="A" data-mode="text">Texto</button>
+      </div>
+      <label class="drop" id="dropA">
+        <div class="ic">📄</div>
+        <p><strong>Elige un archivo</strong> o arrástralo aquí</p>
+        <small>.docx · .pdf · .txt</small>
+        <input type="file" id="fileA" accept=".docx,.pdf,.txt">
+        <div class="fname" id="fnameA"></div>
+      </label>
+      <textarea id="textA" placeholder="Pega aquí el texto original…"></textarea>
+    </section>
+
+    <!-- Documento B -->
+    <section class="panel">
+      <h2><span class="dot b"></span>Documento modificado</h2>
+      <div class="tabs">
+        <button class="tab active" data-doc="B" data-mode="file">Archivo</button>
+        <button class="tab" data-doc="B" data-mode="text">Texto</button>
+      </div>
+      <label class="drop" id="dropB">
+        <div class="ic">📝</div>
+        <p><strong>Elige un archivo</strong> o arrástralo aquí</p>
+        <small>.docx · .pdf · .txt</small>
+        <input type="file" id="fileB" accept=".docx,.pdf,.txt">
+        <div class="fname" id="fnameB"></div>
+      </label>
+      <textarea id="textB" placeholder="Pega aquí el texto modificado…"></textarea>
+    </section>
+  </div>
+
+  <div class="actions">
+    <button class="btn-main" id="btnCompare">Comparar documentos</button>
+    <button class="btn-ghost" id="btnReset">Limpiar todo</button>
+  </div>
+
+  <div class="loading" id="loading"><span class="spinner"></span>Leyendo documentos…</div>
+
+  <!-- Barra flotante de navegación -->
+  <nav class="navbar" id="navbar">
+    <div class="inner">
+      <button class="navbtn" id="btnPrev" title="Cambio anterior" aria-label="Cambio anterior">‹</button>
+      <div class="counter" id="counter">—</div>
+      <button class="navbtn" id="btnNext" title="Cambio siguiente" aria-label="Cambio siguiente">›</button>
+      <div class="legend">
+        <span><span class="chip add"></span>Agregado</span>
+        <span><span class="chip del"></span>Eliminado</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Resultado -->
+  <section id="resultCard">
+    <div id="stats"></div>
+    <div id="diffOutput"></div>
+  </section>
+
+  <footer>Comparador de LAnto · Todo se procesa en tu navegador, nada se sube a internet.</footer>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+const state = {
+  A:{mode:"file", file:null},
+  B:{mode:"file", file:null},
+  changes:[], current:-1
+};
+
+/* ── Pestañas Archivo / Texto ── */
+document.querySelectorAll(".tab").forEach(t=>{
+  t.addEventListener("click",()=>{
+    const doc=t.dataset.doc, mode=t.dataset.mode;
+    state[doc].mode=mode;
+    document.querySelectorAll(`.tab[data-doc="${doc}"]`)
+      .forEach(x=>x.classList.toggle("active",x===t));
+    document.getElementById("drop"+doc).style.display = mode==="file"?"block":"none";
+    document.getElementById("text"+doc).style.display = mode==="text"?"block":"none";
+  });
+});
+
+/* ── Carga y arrastre de archivos ── */
+["A","B"].forEach(doc=>{
+  const drop=document.getElementById("drop"+doc);
+  const input=document.getElementById("file"+doc);
+  const label=document.getElementById("fname"+doc);
+
+  input.addEventListener("change",()=>setFile(doc,input.files[0]));
+  drop.addEventListener("dragover",e=>{e.preventDefault();drop.classList.add("over")});
+  drop.addEventListener("dragleave",()=>drop.classList.remove("over"));
+  drop.addEventListener("drop",e=>{
+    e.preventDefault();drop.classList.remove("over");
+    if(e.dataTransfer.files.length) setFile(doc,e.dataTransfer.files[0]);
+  });
+
+  function setFile(d,f){
+    if(!f) return;
+    state[d].file=f;
+    label.textContent="✓ "+f.name;
+    label.style.display="block";
+  }
+});
+
+/* ── Extracción de texto según tipo ── */
+async function extractText(doc){
+  if(state[doc].mode==="text")
+    return document.getElementById("text"+doc).value;
+
+  const f=state[doc].file;
+  if(!f) return null;
+  const ext=f.name.split(".").pop().toLowerCase();
+
+  if(ext==="txt") return await f.text();
+
+  if(ext==="docx"){
+    const buf=await f.arrayBuffer();
+    const res=await mammoth.extractRawText({arrayBuffer:buf});
+    return res.value;
+  }
+
+  if(ext==="pdf"){
+    const buf=await f.arrayBuffer();
+    const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+    let out=[];
+    for(let p=1;p<=pdf.numPages;p++){
+      const page=await pdf.getPage(p);
+      const tc=await page.getTextContent();
+      out.push(tc.items.map(i=>i.str).join(" "));
+    }
+    return out.join("\n\n");
+  }
+
+  throw new Error("Formato no compatible: ."+ext);
+}
+
+/* ── Comparación ── */
+document.getElementById("btnCompare").addEventListener("click", async ()=>{
+  const loading=document.getElementById("loading");
+  const card=document.getElementById("resultCard");
+  const nav=document.getElementById("navbar");
+  const out=document.getElementById("diffOutput");
+  const stats=document.getElementById("stats");
+
+  loading.style.display="block";
+  card.style.display="none"; nav.style.display="none";
+
+  try{
+    const [txtA,txtB]=await Promise.all([extractText("A"),extractText("B")]);
+    loading.style.display="none";
+
+    if(txtA==null || txtB==null || (!txtA.trim() && !txtB.trim())){
+      card.style.display="block";
+      stats.innerHTML="";
+      out.innerHTML='<div class="empty">Falta contenido: carga un archivo o pega texto en ambos lados.</div>';
+      return;
+    }
+
+    const parts=Diff.diffWords(txtA,txtB);
+    let html="", nAdd=0, nDel=0, id=0;
+    let i=0;
+    while(i<parts.length){
+      const p=parts[i];
+      if(p.added || p.removed){
+        // Agrupa eliminado+agregado contiguos como UN solo cambio
+        let block="";
+        while(i<parts.length && (parts[i].added||parts[i].removed)){
+          const q=parts[i];
+          if(q.removed){block+="<del>"+esc(q.value)+"</del>"; nDel++;}
+          else{block+="<ins>"+esc(q.value)+"</ins>"; nAdd++;}
+          i++;
+        }
+        html+='<span class="chg" id="chg-'+(id++)+'">'+block+"</span>";
+      }else{
+        html+=esc(p.value); i++;
+      }
+    }
+
+    out.innerHTML = id===0
+      ? '<div class="empty">✨ Los dos documentos son idénticos: no hay cambios.</div>'
+      : html;
+
+    stats.innerHTML =
+      "<span><b>"+id+"</b> cambio"+(id===1?"":"s")+"</span>"+
+      '<span style="color:var(--add-ink)"><b>'+nAdd+"</b> fragmento"+(nAdd===1?"":"s")+" agregado"+(nAdd===1?"":"s")+"</span>"+
+      '<span style="color:var(--del-ink)"><b>'+nDel+"</b> fragmento"+(nDel===1?"":"s")+" eliminado"+(nDel===1?"":"s")+"</span>";
+
+    card.style.display="block";
+    state.changes=[...out.querySelectorAll(".chg")];
+    state.current=-1;
+
+    if(id>0){
+      nav.style.display="flex";
+      updateCounter();
+      goTo(0); // salta directo al primer cambio
+    }
+  }catch(err){
+    loading.style.display="none";
+    card.style.display="block";
+    stats.innerHTML="";
+    out.innerHTML='<div class="empty">⚠️ No se pudo leer el documento: '+esc(err.message)+"</div>";
+  }
+});
+
+/* ── Navegación entre cambios ── */
+function goTo(idx){
+  const list=state.changes;
+  if(!list.length) return;
+  idx=Math.max(0,Math.min(idx,list.length-1));
+  if(state.current>=0) list[state.current].classList.remove("current");
+  state.current=idx;
+  const el=list[idx];
+  el.classList.add("current");
+  el.scrollIntoView({behavior:"smooth",block:"center"});
+  updateCounter();
+}
+function updateCounter(){
+  const n=state.changes.length;
+  document.getElementById("counter").textContent =
+    n? "Cambio "+(state.current+1)+" de "+n : "—";
+  document.getElementById("btnPrev").disabled = state.current<=0;
+  document.getElementById("btnNext").disabled = state.current>=n-1;
+}
+document.getElementById("btnPrev").addEventListener("click",()=>goTo(state.current-1));
+document.getElementById("btnNext").addEventListener("click",()=>goTo(state.current+1));
+document.addEventListener("keydown",e=>{
+  if(document.activeElement.tagName==="TEXTAREA") return;
+  if(e.key==="ArrowRight"||e.key==="n") goTo(state.current+1);
+  if(e.key==="ArrowLeft" ||e.key==="p") goTo(state.current-1);
+});
+
+/* ── Limpiar ── */
+document.getElementById("btnReset").addEventListener("click",()=>{
+  ["A","B"].forEach(d=>{
+    state[d].file=null;
+    document.getElementById("file"+d).value="";
+    document.getElementById("text"+d).value="";
+    const fn=document.getElementById("fname"+d);
+    fn.textContent=""; fn.style.display="none";
+  });
+  state.changes=[]; state.current=-1;
+  document.getElementById("resultCard").style.display="none";
+  document.getElementById("navbar").style.display="none";
+  window.scrollTo({top:0,behavior:"smooth"});
+});
+
+function esc(s){
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+</script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Comparador de Documentos 1.2</title>
+<title>Comparador de Documentos</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
@@ -197,10 +197,25 @@
     padding:clamp(22px,4vw,42px);
     min-height:100%;
   }
-  #splitView.synced .phead::after{                        /* CAMBIO: indicador de vista enlazada */
+  #splitView.synced .phead::after,
+  #pdfView .phead::after{                                 /* CAMBIO: PDF real también va enlazada */
     content:"⇅ enlazado";margin-left:auto;
     font-size:11px;font-weight:600;color:var(--accent);
     background:#eaf3fd;border-radius:99px;padding:3px 10px;
+  }
+
+  /* CAMBIO: vista PDF real */
+  #pdfView{display:none;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:820px){#pdfView{grid-template-columns:1fr}}
+  #pdfView .pbody{
+    position:relative;                    /* para medir la posición de cada página */
+    background:#eef0f3;padding:16px;
+    overflow-y:auto;max-height:78vh;
+  }
+  #pdfView canvas{
+    display:block;margin:0 auto 14px;
+    max-width:100%;height:auto;
+    box-shadow:0 1px 4px rgba(0,0,0,.12);border-radius:4px;
   }
 
   ins{
@@ -301,7 +316,8 @@
       <div class="viewtoggle">
         <button id="btnUnified" class="active">Unificada</button>
         <button id="btnSplit">Lado a lado</button>
-        <button id="btnSync">Sincronizada</button>  <!-- CAMBIO: tercera pestaña -->
+        <button id="btnSync">Sincronizada</button>
+        <button id="btnPdf">PDF real</button>  <!-- CAMBIO: cuarta pestaña -->
       </div>
       <div class="legend">
         <span><span class="chip add"></span>Agregado</span>
@@ -326,6 +342,18 @@
       <div class="pane">
         <div class="phead"><span class="dot b"></span>Documento modificado</div>
         <div class="pbody doc" id="paneR"></div>
+      </div>
+    </div>
+
+    <!-- CAMBIO: Vista PDF real (páginas renderizadas con resaltado encima) -->
+    <div id="pdfView">
+      <div class="pane">
+        <div class="phead"><span class="dot a"></span>PDF original</div>
+        <div class="pbody" id="paneLP"></div>
+      </div>
+      <div class="pane">
+        <div class="phead"><span class="dot b"></span>PDF modificado</div>
+        <div class="pbody" id="paneRP"></div>
       </div>
     </div>
   </section>
@@ -515,6 +543,9 @@ document.getElementById("btnCompare").addEventListener("click", async ()=>{
 
     card.style.display="block";
     state.nChanges=id; state.current=-1;
+    pdfState.built=false; pdfState.ok=false; pdfState.groups=[];   // CAMBIO: reinicia vista PDF
+    document.getElementById("paneLP").innerHTML="";                // CAMBIO
+    document.getElementById("paneRP").innerHTML="";                // CAMBIO
     setView(state.view);
 
     if(id>0){
@@ -533,50 +564,64 @@ document.getElementById("btnCompare").addEventListener("click", async ()=>{
 /* ── Cambio de vista ── */
 function setView(v){
   state.view=v;
-  const dosPaneles = (v==="split"||v==="sync");                       // CAMBIO
+  const dosPaneles = (v==="split"||v==="sync");
   document.getElementById("unifiedView").style.display = v==="unified"?"block":"none";
-  document.getElementById("splitView").style.display   = dosPaneles ?"grid" :"none";   // CAMBIO
+  document.getElementById("splitView").style.display   = dosPaneles ?"grid" :"none";
+  document.getElementById("pdfView").style.display     = v==="pdf"  ?"grid" :"none";   // CAMBIO
   document.getElementById("btnUnified").classList.toggle("active",v==="unified");
   document.getElementById("btnSplit").classList.toggle("active",v==="split");
-  document.getElementById("btnSync").classList.toggle("active",v==="sync");            // CAMBIO
-  document.getElementById("splitView").classList.toggle("synced",v==="sync");          // CAMBIO
+  document.getElementById("btnSync").classList.toggle("active",v==="sync");
+  document.getElementById("btnPdf").classList.toggle("active",v==="pdf");              // CAMBIO
+  document.getElementById("splitView").classList.toggle("synced",v==="sync");
+  if(v==="pdf" && !pdfState.built) { buildPdfView(); return; }                         // CAMBIO
+  updateCounter();                                                                     // CAMBIO
   if(state.current>=0) requestAnimationFrame(()=>goTo(state.current,true));
 }
 document.getElementById("btnUnified").addEventListener("click",()=>setView("unified"));
 document.getElementById("btnSplit").addEventListener("click",()=>setView("split"));
-document.getElementById("btnSync").addEventListener("click",()=>setView("sync"));      // CAMBIO
+document.getElementById("btnSync").addEventListener("click",()=>setView("sync"));
+document.getElementById("btnPdf").addEventListener("click",()=>setView("pdf"));        // CAMBIO
 
-/* ── Scroll sincronizado (solo activo en la vista "Sincronizada") ── */
-let syncLock=false;                                                    // CAMBIO: evita el rebote infinito
-function linkScroll(srcId,dstId){
+/* ── Scroll sincronizado ── */
+let syncLock=false;
+function linkScroll(srcId,dstId,views){                                // CAMBIO: vistas donde aplica
   const src=document.getElementById(srcId);
   const dst=document.getElementById(dstId);
   src.addEventListener("scroll",()=>{
-    if(state.view!=="sync" || syncLock) return;
+    if(!views.includes(state.view) || syncLock) return;                // CAMBIO
     syncLock=true;
     const max = src.scrollHeight - src.clientHeight;
-    const ratio = max>0 ? src.scrollTop/max : 0;                       // CAMBIO: sincroniza por proporción
+    const ratio = max>0 ? src.scrollTop/max : 0;
     dst.scrollTop = ratio * (dst.scrollHeight - dst.clientHeight);
     requestAnimationFrame(()=>{ syncLock=false; });
   });
 }
-linkScroll("paneL","paneR");                                           // CAMBIO: bajar A mueve B
-linkScroll("paneR","paneL");                                           // CAMBIO: bajar B mueve A
+linkScroll("paneL","paneR",["sync"]);
+linkScroll("paneR","paneL",["sync"]);
+linkScroll("paneLP","paneRP",["pdf"]);                                 // CAMBIO: PDF real enlazada
+linkScroll("paneRP","paneLP",["pdf"]);                                 // CAMBIO
 
 /* ── Navegación entre cambios (sincronizada en ambas vistas) ── */
 function goTo(idx,keep){
-  const n=state.nChanges;
-  if(!n) return;
+  const isPdf = state.view==="pdf";                                    // CAMBIO
+  const n = isPdf ? pdfState.groups.length : state.nChanges;           // CAMBIO
+  if(!n){ updateCounter(); return; }
   idx=Math.max(0,Math.min(idx,n-1));
-  if(!keep && state.current>=0) mark(state.current,false);
+  if(!isPdf && !keep && state.current>=0) mark(state.current,false);
   state.current=idx;
-  mark(idx,true);
 
-  if(state.view==="unified"){
+  if(isPdf){                                                           // CAMBIO: salto en PDF real
+    const g=pdfState.groups[idx];
+    syncLock=true; setTimeout(()=>{syncLock=false;},800);
+    scrollPdfPane("A","paneLP",g.itemA);
+    scrollPdfPane("B","paneRP",g.itemB);
+  }else if(state.view==="unified"){
+    mark(idx,true);
     const el=document.getElementById("chgU-"+idx);
     if(el) el.scrollIntoView({behavior:"smooth",block:"center"});
   }else{
-    if(state.view==="sync"){ syncLock=true; setTimeout(()=>{syncLock=false;},700); }  // CAMBIO
+    mark(idx,true);
+    if(state.view==="sync"){ syncLock=true; setTimeout(()=>{syncLock=false;},700); }
     centerInPane("paneL","chgL-"+idx);
     centerInPane("paneR","chgR-"+idx);
     const pane=document.getElementById("splitView");
@@ -601,7 +646,7 @@ function centerInPane(paneId,elId){
   pane.scrollTo({top:Math.max(0,top),behavior:"smooth"});
 }
 function updateCounter(){
-  const n=state.nChanges;
+  const n = state.view==="pdf" ? pdfState.groups.length : state.nChanges;  // CAMBIO
   document.getElementById("counter").textContent =
     n? "Cambio "+(state.current+1)+" de "+n : "—";
   document.getElementById("btnPrev").disabled = state.current<=0;
@@ -615,7 +660,166 @@ document.addEventListener("keydown",e=>{
   if(e.key==="ArrowLeft" ||e.key==="p") goTo(state.current-1);
 });
 
-/* ── Limpiar ── */
+/* ══════════════════════════════════════════════
+   VISTA "PDF REAL": renderiza las páginas tal cual
+   (la matemática se ve perfecta) y pinta los
+   resaltados pastel encima, con coordenadas reales.
+   ══════════════════════════════════════════════ */
+const pdfState={built:false,building:false,ok:false,
+  groups:[],canvases:{A:[],B:[]},viewports:{A:[],B:[]}};
+
+function bothArePdf(){
+  const isPdf=s=> s.mode==="file" && s.file && s.file.name.toLowerCase().endsWith(".pdf");
+  return isPdf(state.A) && isPdf(state.B);
+}
+
+/* Lee un PDF guardando cada fragmento de texto con su posición en la página */
+async function readPdfData(file){
+  const buf=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  const items=[]; let raw="";
+  for(let p=1;p<=pdf.numPages;p++){
+    const page=await pdf.getPage(p);
+    const tc=await page.getTextContent();
+    for(const it of tc.items){
+      const s=it.str.replace(/\s+/g," ").trim();
+      if(!s) continue;
+      const start=raw.length; raw+=s; const end=raw.length; raw+=" ";
+      items.push({page:p,start,end,tr:it.transform,w:it.width,h:it.height,hl:[]});
+    }
+  }
+  return {pdf,raw,items};
+}
+
+/* Diff sobre el texto crudo, guardando los rangos de caracteres cambiados */
+function computePdfDiff(rawA,rawB){
+  const parts=Diff.diffWords(rawA,rawB);
+  let a=0,b=0,i=0; const remR=[],addR=[],groups=[];
+  while(i<parts.length){
+    if(parts[i].added||parts[i].removed){
+      const g={aPos:a,bPos:b};
+      while(i<parts.length&&(parts[i].added||parts[i].removed)){
+        const q=parts[i],L=q.value.length;
+        if(q.removed){remR.push([a,a+L]);a+=L;}
+        else{addR.push([b,b+L]);b+=L;}
+        i++;
+      }
+      groups.push(g);
+    }else{a+=parts[i].value.length;b+=parts[i].value.length;i++;}
+  }
+  return {remR,addR,groups};
+}
+
+/* Marca en cada fragmento qué porción (0–1) de su ancho debe resaltarse */
+function markItems(items,ranges){
+  let r=0;
+  for(const it of items){
+    it.hl=[];
+    while(r<ranges.length && ranges[r][1]<=it.start) r++;
+    let k=r;
+    while(k<ranges.length && ranges[k][0]<it.end){
+      const s=Math.max(ranges[k][0],it.start), e=Math.min(ranges[k][1],it.end);
+      if(e>s) it.hl.push([(s-it.start)/(it.end-it.start),(e-it.start)/(it.end-it.start)]);
+      k++;
+    }
+  }
+}
+
+/* Ancla: el fragmento del documento donde ocurre (o donde ocurriría) el cambio */
+function anchorItem(items,pos){
+  if(!items.length) return null;
+  let lo=0,hi=items.length-1,ans=items[0];
+  while(lo<=hi){
+    const m=(lo+hi)>>1;
+    if(items[m].start<=pos){ans=items[m];lo=m+1;}else hi=m-1;
+  }
+  return ans;
+}
+
+/* Dibuja las páginas y encima los rectángulos pastel */
+async function renderPdfPane(data,paneId,side,color){
+  const pane=document.getElementById(paneId);
+  pane.innerHTML="";
+  pdfState.canvases[side]=[]; pdfState.viewports[side]=[];
+  const byPage={};
+  data.items.forEach(it=>{(byPage[it.page]=byPage[it.page]||[]).push(it)});
+  for(let p=1;p<=data.pdf.numPages;p++){
+    const page=await data.pdf.getPage(p);
+    const viewport=page.getViewport({scale:1.5});
+    const canvas=document.createElement("canvas");
+    canvas.width=viewport.width; canvas.height=viewport.height;
+    pane.appendChild(canvas);
+    const ctx=canvas.getContext("2d");
+    await page.render({canvasContext:ctx,viewport}).promise;
+    ctx.globalAlpha=0.45; ctx.fillStyle=color;
+    for(const it of (byPage[p]||[])){
+      if(!it.hl.length) continue;
+      const [x1,y1,x2,y2]=viewport.convertToViewportRectangle(
+        [it.tr[4], it.tr[5], it.tr[4]+it.w, it.tr[5]+it.h]);
+      const L=Math.min(x1,x2), T=Math.min(y1,y2),
+            W=Math.abs(x2-x1), H=Math.abs(y2-y1);
+      for(const [f1,f2] of it.hl)
+        ctx.fillRect(L+W*f1, T-2, Math.max(W*(f2-f1),4), H+4);
+    }
+    ctx.globalAlpha=1;
+    pdfState.canvases[side][p]=canvas;
+    pdfState.viewports[side][p]=viewport;
+  }
+}
+
+/* Desplaza un panel PDF hasta centrar el fragmento del cambio */
+function scrollPdfPane(side,paneId,item){
+  if(!item) return;
+  const canvas=pdfState.canvases[side][item.page];
+  const vp=pdfState.viewports[side][item.page];
+  const pane=document.getElementById(paneId);
+  if(!canvas||!vp||!pane) return;
+  const [,y1,,y2]=vp.convertToViewportRectangle(
+    [item.tr[4], item.tr[5], item.tr[4]+item.w, item.tr[5]+item.h]);
+  const escala = canvas.clientHeight ? canvas.clientHeight/canvas.height : 1;
+  const y = canvas.offsetTop + Math.min(y1,y2)*escala;
+  pane.scrollTo({top:Math.max(0,y-pane.clientHeight/2),behavior:"smooth"});
+}
+
+/* Construye la vista completa (solo la primera vez que se abre) */
+async function buildPdfView(){
+  if(pdfState.building) return;
+  const L=document.getElementById("paneLP"), R=document.getElementById("paneRP");
+  if(!bothArePdf()){
+    L.innerHTML=R.innerHTML=
+      '<div class="empty" style="padding:34px 18px">La vista <b>PDF real</b> necesita que ambos archivos sean <b>.pdf</b>.<br><br>'+
+      'Si tu documento es Word, ábrelo en Word y usa <b>Archivo ▸ Guardar como ▸ PDF</b> '+
+      '(así la matemática se conserva perfecta) y sube ese PDF aquí.</div>';
+    pdfState.ok=false; pdfState.built=true; pdfState.groups=[];
+    updateCounter(); return;
+  }
+  pdfState.building=true;
+  L.innerHTML=R.innerHTML='<div class="empty" style="padding:34px">Generando vista PDF…</div>';
+  try{
+    const [dA,dB]=await Promise.all([readPdfData(state.A.file),readPdfData(state.B.file)]);
+    const {remR,addR,groups}=computePdfDiff(dA.raw,dB.raw);
+    markItems(dA.items,remR);
+    markItems(dB.items,addR);
+    groups.forEach(g=>{
+      g.itemA=anchorItem(dA.items,g.aPos);
+      g.itemB=anchorItem(dB.items,g.bPos);
+    });
+    pdfState.groups=groups;
+    await renderPdfPane(dA,"paneLP","A","#f2a4b4");   /* rosa pastel */
+    await renderPdfPane(dB,"paneRP","B","#9fd8ab");   /* verde pastel */
+    pdfState.ok=true;
+    state.current = pdfState.groups.length ? 0 : -1;
+    if(pdfState.groups.length) requestAnimationFrame(()=>goTo(0,true));
+  }catch(err){
+    L.innerHTML='<div class="empty">⚠️ No se pudo generar la vista PDF: '+escP(err.message)+"</div>";
+    R.innerHTML="";
+    pdfState.ok=false; pdfState.groups=[];
+  }
+  pdfState.built=true; pdfState.building=false;
+  updateCounter();
+}
+
+
 document.getElementById("btnReset").addEventListener("click",()=>{
   ["A","B"].forEach(d=>{
     state[d].file=null;
@@ -625,6 +829,9 @@ document.getElementById("btnReset").addEventListener("click",()=>{
     fn.textContent=""; fn.style.display="none";
   });
   state.nChanges=0; state.current=-1;
+  pdfState.built=false; pdfState.ok=false; pdfState.groups=[];   // CAMBIO
+  document.getElementById("paneLP").innerHTML="";                // CAMBIO
+  document.getElementById("paneRP").innerHTML="";                // CAMBIO
   document.getElementById("resultCard").style.display="none";
   document.getElementById("navbar").style.display="none";
   window.scrollTo({top:0,behavior:"smooth"});

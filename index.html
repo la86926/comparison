@@ -188,7 +188,19 @@
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;
   }
   .pane .pbody{
-    padding:22px 24px;overflow-y:auto;max-height:70vh;
+    padding:22px;overflow-y:auto;max-height:72vh;
+    background:#eef0f3;                                   /* CAMBIO: fondo tipo visor de PDF */
+  }
+  .pane .sheet{                                           /* CAMBIO: la "hoja" blanca del documento */
+    background:#fff;border-radius:6px;
+    box-shadow:0 1px 4px rgba(0,0,0,.10),0 4px 14px rgba(0,0,0,.06);
+    padding:clamp(22px,4vw,42px);
+    min-height:100%;
+  }
+  #splitView.synced .phead::after{                        /* CAMBIO: indicador de vista enlazada */
+    content:"⇅ enlazado";margin-left:auto;
+    font-size:11px;font-weight:600;color:var(--accent);
+    background:#eaf3fd;border-radius:99px;padding:3px 10px;
   }
 
   ins{
@@ -231,7 +243,7 @@
 <body>
 
 <header>
-  <h1>Comparador de Documentos 1.0</h1>
+  <h1>Comparador de Documentos</h1>
   <p>Sube dos versiones — Word, PDF, TXT o texto — y encuentra cada cambio al instante.</p>
 </header>
 
@@ -289,6 +301,7 @@
       <div class="viewtoggle">
         <button id="btnUnified" class="active">Unificada</button>
         <button id="btnSplit">Lado a lado</button>
+        <button id="btnSync">Sincronizada</button>  <!-- CAMBIO: tercera pestaña -->
       </div>
       <div class="legend">
         <span><span class="chip add"></span>Agregado</span>
@@ -484,13 +497,15 @@ document.getElementById("btnCompare").addEventListener("click", async ()=>{
 
     const wrapP = h => "<p>"+h.replace(/\n\n/g,"</p><p>").replace(/\n/g,"<br>")+"</p>";
 
+    const sheet = h => '<div class="sheet">'+wrapP(h)+"</div>";   // CAMBIO: hoja blanca tipo PDF
+
     if(id===0){
       uni.innerHTML='<div class="empty">✨ Los dos documentos son idénticos: no hay cambios.</div>';
-      pL.innerHTML=wrapP(hL); pR.innerHTML=wrapP(hR);
+      pL.innerHTML=sheet(hL); pR.innerHTML=sheet(hR);             // CAMBIO
     }else{
       uni.innerHTML=wrapP(hU);
-      pL.innerHTML=wrapP(hL);
-      pR.innerHTML=wrapP(hR);
+      pL.innerHTML=sheet(hL);                                     // CAMBIO
+      pR.innerHTML=sheet(hR);                                     // CAMBIO
     }
 
     stats.innerHTML =
@@ -518,14 +533,35 @@ document.getElementById("btnCompare").addEventListener("click", async ()=>{
 /* ── Cambio de vista ── */
 function setView(v){
   state.view=v;
+  const dosPaneles = (v==="split"||v==="sync");                       // CAMBIO
   document.getElementById("unifiedView").style.display = v==="unified"?"block":"none";
-  document.getElementById("splitView").style.display   = v==="split"  ?"grid" :"none";
+  document.getElementById("splitView").style.display   = dosPaneles ?"grid" :"none";   // CAMBIO
   document.getElementById("btnUnified").classList.toggle("active",v==="unified");
   document.getElementById("btnSplit").classList.toggle("active",v==="split");
+  document.getElementById("btnSync").classList.toggle("active",v==="sync");            // CAMBIO
+  document.getElementById("splitView").classList.toggle("synced",v==="sync");          // CAMBIO
   if(state.current>=0) requestAnimationFrame(()=>goTo(state.current,true));
 }
 document.getElementById("btnUnified").addEventListener("click",()=>setView("unified"));
 document.getElementById("btnSplit").addEventListener("click",()=>setView("split"));
+document.getElementById("btnSync").addEventListener("click",()=>setView("sync"));      // CAMBIO
+
+/* ── Scroll sincronizado (solo activo en la vista "Sincronizada") ── */
+let syncLock=false;                                                    // CAMBIO: evita el rebote infinito
+function linkScroll(srcId,dstId){
+  const src=document.getElementById(srcId);
+  const dst=document.getElementById(dstId);
+  src.addEventListener("scroll",()=>{
+    if(state.view!=="sync" || syncLock) return;
+    syncLock=true;
+    const max = src.scrollHeight - src.clientHeight;
+    const ratio = max>0 ? src.scrollTop/max : 0;                       // CAMBIO: sincroniza por proporción
+    dst.scrollTop = ratio * (dst.scrollHeight - dst.clientHeight);
+    requestAnimationFrame(()=>{ syncLock=false; });
+  });
+}
+linkScroll("paneL","paneR");                                           // CAMBIO: bajar A mueve B
+linkScroll("paneR","paneL");                                           // CAMBIO: bajar B mueve A
 
 /* ── Navegación entre cambios (sincronizada en ambas vistas) ── */
 function goTo(idx,keep){
@@ -540,6 +576,7 @@ function goTo(idx,keep){
     const el=document.getElementById("chgU-"+idx);
     if(el) el.scrollIntoView({behavior:"smooth",block:"center"});
   }else{
+    if(state.view==="sync"){ syncLock=true; setTimeout(()=>{syncLock=false;},700); }  // CAMBIO
     centerInPane("paneL","chgL-"+idx);
     centerInPane("paneR","chgR-"+idx);
     const pane=document.getElementById("splitView");
@@ -559,7 +596,8 @@ function centerInPane(paneId,elId){
   const pane=document.getElementById(paneId);
   const el=document.getElementById(elId);
   if(!pane||!el) return;
-  const top = el.offsetTop - pane.clientHeight/2 + el.offsetHeight/2;
+  const top = el.getBoundingClientRect().top - pane.getBoundingClientRect().top   // CAMBIO
+            + pane.scrollTop - pane.clientHeight/2 + el.offsetHeight/2;           // CAMBIO
   pane.scrollTo({top:Math.max(0,top),behavior:"smooth"});
 }
 function updateCounter(){

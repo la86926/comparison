@@ -76,11 +76,14 @@
   .tab.active{background:var(--ink);color:#fff}
 
   .drop{
+    display:block;                       /* CAMBIO: el <label> era inline y se distorsionaba */
+    width:100%;                          /* CAMBIO: ocupa todo el ancho del panel */
     border:1.5px dashed #c7c7cc;border-radius:14px;
     padding:30px 16px;text-align:center;cursor:pointer;
     transition:border-color .2s,background .2s;
   }
-  .drop:hover,.drop.over{border-color:var(--accent);background:#f0f7ff}
+  .drop > *{pointer-events:none}         /* CAMBIO: evita el parpadeo raro al arrastrar sobre los hijos */
+  .drop:hover,.drop.over{border-color:var(--accent);background:#f0f7ff;transform:none}
   .drop .ic{font-size:28px;margin-bottom:8px}
   .drop p{font-size:14px;color:var(--ink-soft)}
   .drop strong{color:var(--accent);font-weight:600}
